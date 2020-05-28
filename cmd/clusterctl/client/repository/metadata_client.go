@@ -231,6 +231,18 @@ func (f *metadataClient) getEmbeddedMetadata() *clusterctlv1.Metadata {
 					// older version are not supported by clusterctl
 				},
 			}
+		case config.GCPProviderName:
+			return &clusterctlv1.Metadata{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: clusterctlv1.GroupVersion.String(),
+					Kind:       "Metadata",
+				},
+				ReleaseSeries: []clusterctlv1.ReleaseSeries{
+					// v1alpha3 release series
+					{Major: 0, Minor: 2, Contract: "v1alpha3"},
+					// older version are not supported by clusterctl
+				},
+			}
 		default:
 			return nil
 		}

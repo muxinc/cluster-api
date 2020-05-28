@@ -35,6 +35,7 @@ const (
 	Metal3ProviderName              = "metal3"
 	OpenStackProviderName           = "openstack"
 	VSphereProviderName             = "vsphere"
+	GCPProviderName                 = "gcp"
 	ProvidersConfigKey              = "providers"
 )
 
@@ -102,6 +103,11 @@ func (p *providersClient) defaults() []Provider {
 		&provider{
 			name:         VSphereProviderName,
 			url:          "https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/releases/latest/infrastructure-components.yaml",
+			providerType: clusterctlv1.InfrastructureProviderType,
+		},
+		&provider{
+			name:         GCPProviderName,
+			url:          "https://github.com/muxinc/cluster-api-provider-gcp/releases/latest/infrastructure-components.yaml",
 			providerType: clusterctlv1.InfrastructureProviderType,
 		},
 
