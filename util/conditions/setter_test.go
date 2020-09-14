@@ -148,11 +148,19 @@ func TestSetLastTransitionTime(t *testing.T) {
 		LastTransitionTimeCheck func(*WithT, metav1.Time)
 	}{
 		{
-			name: "Set a condition that dos not exists should set the last transition time",
+			name: "Set a condition that does not exists should set the last transition time if not defined",
 			to:   setterWithConditions(),
 			new:  foo,
 			LastTransitionTimeCheck: func(g *WithT, lastTransitionTime metav1.Time) {
 				g.Expect(lastTransitionTime).ToNot(BeZero())
+			},
+		},
+		{
+			name: "Set a condition that does not exists should preserve the last transition time if defined",
+			to:   setterWithConditions(),
+			new:  fooWithLastTransitionTime,
+			LastTransitionTimeCheck: func(g *WithT, lastTransitionTime metav1.Time) {
+				g.Expect(lastTransitionTime).To(Equal(x))
 			},
 		},
 		{
@@ -214,6 +222,36 @@ func TestMarkMethods(t *testing.T) {
 		Reason:  "reasonBaz",
 		Message: "messageBaz",
 	}))
+}
+
+func TestSetSummary(t *testing.T) {
+	g := NewWithT(t)
+	target := setterWithConditions(TrueCondition("foo"))
+
+	SetSummary(target)
+
+	g.Expect(Has(target, clusterv1.ReadyCondition)).To(BeTrue())
+}
+
+func TestSetMirror(t *testing.T) {
+	g := NewWithT(t)
+	source := getterWithConditions(TrueCondition(clusterv1.ReadyCondition))
+	target := setterWithConditions()
+
+	SetMirror(target, "foo", source)
+
+	g.Expect(Has(target, "foo")).To(BeTrue())
+}
+
+func TestSetAggregate(t *testing.T) {
+	g := NewWithT(t)
+	source1 := getterWithConditions(TrueCondition(clusterv1.ReadyCondition))
+	source2 := getterWithConditions(TrueCondition(clusterv1.ReadyCondition))
+	target := setterWithConditions()
+
+	SetAggregate(target, "foo", []Getter{source1, source2})
+
+	g.Expect(Has(target, "foo")).To(BeTrue())
 }
 
 func setterWithConditions(conditions ...*clusterv1.Condition) Setter {

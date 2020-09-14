@@ -17,11 +17,11 @@ images:
   loadBehavior: mustLoad
 - name: gcr.io/k8s-staging-cluster-api/capd-manager-amd64:ci
   loadBehavior: mustLoad
-- name: quay.io/jetstack/cert-manager-cainjector:v0.11.0
+- name: quay.io/jetstack/cert-manager-cainjector:v0.16.1
   loadBehavior: tryLoad
-- name: quay.io/jetstack/cert-manager-webhook:v0.11.0
+- name: quay.io/jetstack/cert-manager-webhook:v0.16.1
   loadBehavior: tryLoad
-- name: quay.io/jetstack/cert-manager-controller:v0.11.0
+- name: quay.io/jetstack/cert-manager-controller:v0.16.1
   loadBehavior: tryLoad
 
 providers:
@@ -32,6 +32,9 @@ providers:
   - name: v0.3.0
   # Use manifest from source files
     value: ../../../config
+    replacements:
+    - old: --metrics-addr=127.0.0.1:8080
+      new: --metrics-addr=:8080
 
 - name: kubeadm
   type: BootstrapProvider
@@ -39,6 +42,9 @@ providers:
   - name: v0.3.0
   # Use manifest from source files
     value: ../../../bootstrap/kubeadm/config
+    replacements:
+    - old: --metrics-addr=127.0.0.1:8080
+      new: --metrics-addr=:8080
 
 - name: kubeadm
   type: ControlPlaneProvider
@@ -46,6 +52,9 @@ providers:
   - name: v0.3.0
   # Use manifest from source files
     value: ../../../controlplane/kubeadm/config
+    replacements:
+    - old: --metrics-addr=127.0.0.1:8080
+      new: --metrics-addr=:8080
 
 - name: docker
   type: InfrastructureProvider
@@ -53,6 +62,9 @@ providers:
   - name: v0.3.0
   # Use manifest from source files
     value: ../../../test/infrastructure/docker/config
+    replacements:
+    - old: --metrics-addr=127.0.0.1:8080
+      new: --metrics-addr=:8080
   files:
   # Add a metadata for docker provider
   - sourcePath: "../data/infrastructure-docker/metadata.yaml"
@@ -72,6 +84,7 @@ variables:
   # IMPORTANT! This values should match the one used by the CNI provider
   DOCKER_POD_CIDRS: "192.168.0.0/16"
   CNI: "./data/cni/kindnet/kindnet.yaml"
+  EXP_CLUSTER_RESOURCE_SET: "true"
 
 intervals:
   default/wait-controllers: ["3m", "10s"]

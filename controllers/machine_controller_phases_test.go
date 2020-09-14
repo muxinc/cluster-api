@@ -24,7 +24,6 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
-	dto "github.com/prometheus/client_model/go"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -118,8 +117,8 @@ var _ = Describe("Reconcile Machine Phases", func() {
 				defaultCluster,
 				defaultKubeconfigSecret,
 				machine,
-				external.TestGenericBootstrapCRD,
-				external.TestGenericInfrastructureCRD,
+				external.TestGenericBootstrapCRD.DeepCopy(),
+				external.TestGenericInfrastructureCRD.DeepCopy(),
 				bootstrapConfig,
 				infraConfig,
 			),
@@ -154,8 +153,8 @@ var _ = Describe("Reconcile Machine Phases", func() {
 				defaultCluster,
 				defaultKubeconfigSecret,
 				machine,
-				external.TestGenericBootstrapCRD,
-				external.TestGenericInfrastructureCRD,
+				external.TestGenericBootstrapCRD.DeepCopy(),
+				external.TestGenericInfrastructureCRD.DeepCopy(),
 				bootstrapConfig,
 				infraConfig,
 			),
@@ -195,8 +194,8 @@ var _ = Describe("Reconcile Machine Phases", func() {
 				defaultCluster,
 				defaultKubeconfigSecret,
 				machine,
-				external.TestGenericBootstrapCRD,
-				external.TestGenericInfrastructureCRD,
+				external.TestGenericBootstrapCRD.DeepCopy(),
+				external.TestGenericInfrastructureCRD.DeepCopy(),
 				bootstrapConfig,
 				infraConfig,
 			),
@@ -262,8 +261,8 @@ var _ = Describe("Reconcile Machine Phases", func() {
 				defaultCluster,
 				defaultKubeconfigSecret,
 				machine,
-				external.TestGenericBootstrapCRD,
-				external.TestGenericInfrastructureCRD,
+				external.TestGenericBootstrapCRD.DeepCopy(),
+				external.TestGenericInfrastructureCRD.DeepCopy(),
 				bootstrapConfig,
 				infraConfig,
 			),
@@ -316,8 +315,8 @@ var _ = Describe("Reconcile Machine Phases", func() {
 				defaultCluster,
 				defaultKubeconfigSecret,
 				machine,
-				external.TestGenericBootstrapCRD,
-				external.TestGenericInfrastructureCRD,
+				external.TestGenericBootstrapCRD.DeepCopy(),
+				external.TestGenericInfrastructureCRD.DeepCopy(),
 				bootstrapConfig,
 				infraConfig,
 			),
@@ -381,8 +380,8 @@ var _ = Describe("Reconcile Machine Phases", func() {
 				defaultCluster,
 				defaultKubeconfigSecret,
 				machine,
-				external.TestGenericBootstrapCRD,
-				external.TestGenericInfrastructureCRD,
+				external.TestGenericBootstrapCRD.DeepCopy(),
+				external.TestGenericInfrastructureCRD.DeepCopy(),
 				bootstrapConfig,
 				infraConfig,
 			),
@@ -426,8 +425,8 @@ var _ = Describe("Reconcile Machine Phases", func() {
 				defaultCluster,
 				defaultKubeconfigSecret,
 				machine,
-				external.TestGenericBootstrapCRD,
-				external.TestGenericInfrastructureCRD,
+				external.TestGenericBootstrapCRD.DeepCopy(),
+				external.TestGenericInfrastructureCRD.DeepCopy(),
 				bootstrapConfig,
 				infraConfig,
 			),
@@ -493,8 +492,8 @@ var _ = Describe("Reconcile Machine Phases", func() {
 				defaultCluster,
 				defaultKubeconfigSecret,
 				machine,
-				external.TestGenericBootstrapCRD,
-				external.TestGenericInfrastructureCRD,
+				external.TestGenericBootstrapCRD.DeepCopy(),
+				external.TestGenericInfrastructureCRD.DeepCopy(),
 				bootstrapConfig,
 				infraConfig,
 			),
@@ -681,13 +680,22 @@ func TestReconcileBootstrap(t *testing.T) {
 			},
 		},
 		{
-			name: "existing machine, bootstrap provider is not ready",
+			name: "existing machine, bootstrap provider is not ready, and ownerref updated",
 			bootstrapConfig: map[string]interface{}{
 				"kind":       "BootstrapMachine",
 				"apiVersion": "bootstrap.cluster.x-k8s.io/v1alpha3",
 				"metadata": map[string]interface{}{
 					"name":      "bootstrap-config1",
 					"namespace": "default",
+					"ownerReferences": []interface{}{
+						map[string]interface{}{
+							"apiVersion": clusterv1.GroupVersion.String(),
+							"kind":       "MachineSet",
+							"name":       "ms",
+							"uid":        "1",
+							"controller": true,
+						},
+					},
 				},
 				"spec": map[string]interface{}{},
 				"status": map[string]interface{}{
@@ -713,6 +721,55 @@ func TestReconcileBootstrap(t *testing.T) {
 				},
 			},
 			expectError: true,
+			expected: func(g *WithT, m *clusterv1.Machine) {
+				g.Expect(m.GetOwnerReferences()).NotTo(ContainRefOfGroupKind("cluster.x-k8s.io", "MachineSet"))
+			},
+		},
+		{
+			name: "existing machine, machineset owner and version v1alpha2, and ownerref updated",
+			bootstrapConfig: map[string]interface{}{
+				"kind":       "BootstrapMachine",
+				"apiVersion": "bootstrap.cluster.x-k8s.io/v1alpha3",
+				"metadata": map[string]interface{}{
+					"name":      "bootstrap-config1",
+					"namespace": "default",
+					"ownerReferences": []interface{}{
+						map[string]interface{}{
+							"apiVersion": "cluster.x-k8s.io/v1alpha2",
+							"kind":       "MachineSet",
+							"name":       "ms",
+							"uid":        "1",
+							"controller": true,
+						},
+					},
+				},
+				"spec": map[string]interface{}{},
+				"status": map[string]interface{}{
+					"ready": false,
+				},
+			},
+			machine: &clusterv1.Machine{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "bootstrap-test-existing",
+					Namespace: "default",
+				},
+				Spec: clusterv1.MachineSpec{
+					Bootstrap: clusterv1.Bootstrap{
+						ConfigRef: &corev1.ObjectReference{
+							APIVersion: "bootstrap.cluster.x-k8s.io/v1alpha2",
+							Kind:       "BootstrapMachine",
+							Name:       "bootstrap-config1",
+						},
+					},
+				},
+				Status: clusterv1.MachineStatus{
+					BootstrapReady: true,
+				},
+			},
+			expectError: true,
+			expected: func(g *WithT, m *clusterv1.Machine) {
+				g.Expect(m.GetOwnerReferences()).NotTo(ContainRefOfGroupKind("cluster.x-k8s.io", "MachineSet"))
+			},
 		},
 	}
 
@@ -730,8 +787,8 @@ func TestReconcileBootstrap(t *testing.T) {
 			r := &MachineReconciler{
 				Client: fake.NewFakeClientWithScheme(scheme.Scheme,
 					tc.machine,
-					external.TestGenericBootstrapCRD,
-					external.TestGenericInfrastructureCRD,
+					external.TestGenericBootstrapCRD.DeepCopy(),
+					external.TestGenericInfrastructureCRD.DeepCopy(),
 					bootstrapConfig,
 				),
 				Log:    log.Log,
@@ -802,6 +859,15 @@ func TestReconcileInfrastructure(t *testing.T) {
 				"metadata": map[string]interface{}{
 					"name":      "infra-config1",
 					"namespace": "default",
+					"ownerReferences": []interface{}{
+						map[string]interface{}{
+							"apiVersion": clusterv1.GroupVersion.String(),
+							"kind":       "MachineSet",
+							"name":       "ms",
+							"uid":        "1",
+							"controller": true,
+						},
+					},
 				},
 				"spec": map[string]interface{}{
 					"providerID": "test://id-1",
@@ -824,6 +890,7 @@ func TestReconcileInfrastructure(t *testing.T) {
 			expectChanged: true,
 			expected: func(g *WithT, m *clusterv1.Machine) {
 				g.Expect(m.Status.InfrastructureReady).To(BeTrue())
+				g.Expect(m.GetOwnerReferences()).NotTo(ContainRefOfGroupKind("cluster.x-k8s.io", "MachineSet"))
 			},
 		},
 		{
@@ -931,8 +998,8 @@ func TestReconcileInfrastructure(t *testing.T) {
 			r := &MachineReconciler{
 				Client: fake.NewFakeClientWithScheme(scheme.Scheme,
 					tc.machine,
-					external.TestGenericBootstrapCRD,
-					external.TestGenericInfrastructureCRD,
+					external.TestGenericBootstrapCRD.DeepCopy(),
+					external.TestGenericInfrastructureCRD.DeepCopy(),
 					infraConfig,
 				),
 				Log:    log.Log,
@@ -952,13 +1019,4 @@ func TestReconcileInfrastructure(t *testing.T) {
 			}
 		})
 	}
-}
-
-func getMetricFamily(list []*dto.MetricFamily, metricName string) *dto.MetricFamily {
-	for _, mf := range list {
-		if mf.GetName() == metricName {
-			return mf
-		}
-	}
-	return nil
 }

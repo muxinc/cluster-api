@@ -31,12 +31,12 @@ import (
 	"k8s.io/utils/pointer"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/controllers/external"
+	"sigs.k8s.io/cluster-api/test/helpers"
 	"sigs.k8s.io/cluster-api/util"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -105,7 +105,7 @@ func TestMachineFinalizer(t *testing.T) {
 			g := NewWithT(t)
 
 			mr := &MachineReconciler{
-				Client: fake.NewFakeClientWithScheme(
+				Client: helpers.NewFakeClientWithScheme(
 					scheme.Scheme,
 					clusterCorrectMeta,
 					machineValidCluster,
@@ -266,7 +266,7 @@ func TestMachineOwnerReference(t *testing.T) {
 			g := NewWithT(t)
 
 			mr := &MachineReconciler{
-				Client: fake.NewFakeClientWithScheme(
+				Client: helpers.NewFakeClientWithScheme(
 					scheme.Scheme,
 					testCluster,
 					machineInvalidCluster,
@@ -278,10 +278,18 @@ func TestMachineOwnerReference(t *testing.T) {
 				scheme: scheme.Scheme,
 			}
 
-			_, _ = mr.Reconcile(tc.request)
-
 			key := client.ObjectKey{Namespace: tc.m.Namespace, Name: tc.m.Name}
 			var actual clusterv1.Machine
+
+			// this first requeue is to add finalizer
+			result, err := mr.Reconcile(tc.request)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(result).To(Equal(ctrl.Result{}))
+			g.Expect(mr.Client.Get(ctx, key, &actual)).To(Succeed())
+			g.Expect(actual.Finalizers).To(ContainElement(clusterv1.MachineFinalizer))
+
+			_, _ = mr.Reconcile(tc.request)
+
 			if len(tc.expectedOR) > 0 {
 				g.Expect(mr.Client.Get(ctx, key, &actual)).To(Succeed())
 				g.Expect(actual.OwnerReferences).To(Equal(tc.expectedOR))
@@ -353,6 +361,7 @@ func TestReconcileRequest(t *testing.T) {
 					NodeRef: &corev1.ObjectReference{
 						Name: "test",
 					},
+					ObservedGeneration: 1,
 				},
 			},
 			expected: expected{
@@ -380,6 +389,7 @@ func TestReconcileRequest(t *testing.T) {
 					NodeRef: &corev1.ObjectReference{
 						Name: "test",
 					},
+					ObservedGeneration: 1,
 				},
 			},
 			expected: expected{
@@ -419,11 +429,11 @@ func TestReconcileRequest(t *testing.T) {
 		t.Run("machine should be "+tc.machine.Name, func(t *testing.T) {
 			g := NewWithT(t)
 
-			clientFake := fake.NewFakeClientWithScheme(
+			clientFake := helpers.NewFakeClientWithScheme(
 				scheme.Scheme,
 				&testCluster,
 				&tc.machine,
-				external.TestGenericInfrastructureCRD,
+				external.TestGenericInfrastructureCRD.DeepCopy(),
 				&infraConfig,
 			)
 
@@ -461,17 +471,6 @@ func TestReconcileDeleteExternal(t *testing.T) {
 		},
 	}
 
-	infraConfig := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"kind":       "InfrastructureMachine",
-			"apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha3",
-			"metadata": map[string]interface{}{
-				"name":      "delete-infra",
-				"namespace": "default",
-			},
-		},
-	}
-
 	machine := &clusterv1.Machine{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "delete",
@@ -479,11 +478,6 @@ func TestReconcileDeleteExternal(t *testing.T) {
 		},
 		Spec: clusterv1.MachineSpec{
 			ClusterName: "test-cluster",
-			InfrastructureRef: corev1.ObjectReference{
-				APIVersion: "infrastructure.cluster.x-k8s.io/v1alpha3",
-				Kind:       "InfrastructureMachine",
-				Name:       "delete-infra",
-			},
 			Bootstrap: clusterv1.Bootstrap{
 				ConfigRef: &corev1.ObjectReference{
 					APIVersion: "bootstrap.cluster.x-k8s.io/v1alpha3",
@@ -497,36 +491,29 @@ func TestReconcileDeleteExternal(t *testing.T) {
 	testCases := []struct {
 		name            string
 		bootstrapExists bool
-		infraExists     bool
-		expected        bool
 		expectError     bool
+		expected        *unstructured.Unstructured
 	}{
 		{
-			name:            "should continue to reconcile delete of external refs since both refs exists",
+			name:            "should continue to reconcile delete of external refs if exists",
 			bootstrapExists: true,
-			infraExists:     true,
-			expected:        false,
-			expectError:     false,
+			expected: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"apiVersion": "bootstrap.cluster.x-k8s.io/v1alpha3",
+					"kind":       "BootstrapConfig",
+					"metadata": map[string]interface{}{
+						"name":            "delete-bootstrap",
+						"namespace":       "default",
+						"resourceVersion": "1",
+					},
+				},
+			},
+			expectError: false,
 		},
 		{
-			name:            "should continue to reconcile delete of external refs since infra ref exist",
+			name:            "should no longer reconcile deletion of external refs since it doesn't exist",
 			bootstrapExists: false,
-			infraExists:     true,
-			expected:        false,
-			expectError:     false,
-		},
-		{
-			name:            "should continue to reconcile delete of external refs since bootstrap ref exist",
-			bootstrapExists: true,
-			infraExists:     false,
-			expected:        false,
-			expectError:     false,
-		},
-		{
-			name:            "should no longer reconcile deletion of external refs since both don't exist",
-			bootstrapExists: false,
-			infraExists:     false,
-			expected:        true,
+			expected:        nil,
 			expectError:     false,
 		},
 	}
@@ -541,18 +528,14 @@ func TestReconcileDeleteExternal(t *testing.T) {
 				objs = append(objs, bootstrapConfig)
 			}
 
-			if tc.infraExists {
-				objs = append(objs, infraConfig)
-			}
-
 			r := &MachineReconciler{
-				Client: fake.NewFakeClientWithScheme(scheme.Scheme, objs...),
+				Client: helpers.NewFakeClientWithScheme(scheme.Scheme, objs...),
 				Log:    log.Log,
 				scheme: scheme.Scheme,
 			}
 
-			ok, err := r.reconcileDeleteExternal(ctx, machine)
-			g.Expect(ok).To(Equal(tc.expected))
+			obj, err := r.reconcileDeleteExternal(ctx, machine, machine.Spec.Bootstrap.ConfigRef)
+			g.Expect(obj).To(Equal(tc.expected))
 			if tc.expectError {
 				g.Expect(err).To(HaveOccurred())
 			} else {
@@ -590,7 +573,7 @@ func TestRemoveMachineFinalizerAfterDeleteReconcile(t *testing.T) {
 	}
 	key := client.ObjectKey{Namespace: m.Namespace, Name: m.Name}
 	mr := &MachineReconciler{
-		Client: fake.NewFakeClientWithScheme(scheme.Scheme, testCluster, m),
+		Client: helpers.NewFakeClientWithScheme(scheme.Scheme, testCluster, m),
 		Log:    log.Log,
 		scheme: scheme.Scheme,
 	}
@@ -600,96 +583,6 @@ func TestRemoveMachineFinalizerAfterDeleteReconcile(t *testing.T) {
 	var actual clusterv1.Machine
 	g.Expect(mr.Client.Get(ctx, key, &actual)).To(Succeed())
 	g.Expect(actual.ObjectMeta.Finalizers).To(BeEmpty())
-}
-
-func TestReconcileMetrics(t *testing.T) {
-	tests := []struct {
-		name            string
-		ms              clusterv1.MachineStatus
-		expectedMetrics map[string]float64
-	}{
-		{
-			name: "machine bootstrap metric is set to 1 if ready",
-			ms: clusterv1.MachineStatus{
-				BootstrapReady: true,
-			},
-			expectedMetrics: map[string]float64{"capi_machine_bootstrap_ready": 1},
-		},
-		{
-			name: "machine bootstrap metric is set to 0 if not ready",
-			ms: clusterv1.MachineStatus{
-				BootstrapReady: false,
-			},
-			expectedMetrics: map[string]float64{"capi_machine_bootstrap_ready": 0},
-		},
-		{
-			name: "machine infrastructure metric is set to 1 if ready",
-			ms: clusterv1.MachineStatus{
-				InfrastructureReady: true,
-			},
-			expectedMetrics: map[string]float64{"capi_machine_infrastructure_ready": 1},
-		},
-		{
-			name: "machine infrastructure metric is set to 0 if not ready",
-			ms: clusterv1.MachineStatus{
-				InfrastructureReady: false,
-			},
-			expectedMetrics: map[string]float64{"capi_machine_infrastructure_ready": 0},
-		},
-		{
-			name: "machine node metric is set to 1 if node ref exists",
-			ms: clusterv1.MachineStatus{
-				NodeRef: &corev1.ObjectReference{
-					Name: "test",
-				},
-			},
-			expectedMetrics: map[string]float64{"capi_machine_node_ready": 1},
-		},
-		{
-			name:            "machine infrastructure metric is set to 0 if not ready",
-			ms:              clusterv1.MachineStatus{},
-			expectedMetrics: map[string]float64{"capi_machine_node_ready": 0},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
-
-			var objs []runtime.Object
-			machine := &clusterv1.Machine{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-machine",
-				},
-				Spec:   clusterv1.MachineSpec{},
-				Status: tt.ms,
-			}
-			objs = append(objs, machine)
-
-			r := &MachineReconciler{
-				Client: fake.NewFakeClientWithScheme(scheme.Scheme, objs...),
-				Log:    log.Log,
-				scheme: scheme.Scheme,
-			}
-
-			r.reconcileMetrics(context.TODO(), machine)
-
-			for em, ev := range tt.expectedMetrics {
-				mr, err := metrics.Registry.Gather()
-				g.Expect(err).ToNot(HaveOccurred())
-				mf := getMetricFamily(mr, em)
-				g.Expect(mf).ToNot(BeNil())
-				for _, m := range mf.GetMetric() {
-					for _, l := range m.GetLabel() {
-						// ensure that the metric has a matching label
-						if l.GetName() == "machine" && l.GetValue() == machine.Name {
-							g.Expect(m.GetGauge().GetValue()).To(Equal(ev))
-						}
-					}
-				}
-			}
-		})
-	}
 }
 
 func Test_clusterToActiveMachines(t *testing.T) {
@@ -778,7 +671,7 @@ func Test_clusterToActiveMachines(t *testing.T) {
 		objs = append(objs, m2)
 
 		r := &MachineReconciler{
-			Client: fake.NewFakeClientWithScheme(scheme.Scheme, objs...),
+			Client: helpers.NewFakeClientWithScheme(scheme.Scheme, objs...),
 			Log:    log.Log,
 			scheme: scheme.Scheme,
 		}
@@ -952,7 +845,7 @@ func TestIsDeleteNodeAllowed(t *testing.T) {
 			}
 
 			mr := &MachineReconciler{
-				Client: fake.NewFakeClientWithScheme(
+				Client: helpers.NewFakeClientWithScheme(
 					scheme.Scheme,
 					tc.cluster,
 					tc.machine,

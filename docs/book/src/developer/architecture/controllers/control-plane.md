@@ -7,6 +7,7 @@ The Control Plane controller's main responsibilities are:
 * Managing a set of machines that represent a Kubernetes control plane.
 * Provide information about the state of the control plane to downstream
   consumers.
+* Create/manage a secret with the kubeconfig file for accessing the workload cluster.
 
 A reference implementation is managed within the core Cluster API project as the
 Kubeadm control plane controller (`KubeadmControlPlane`). In this document,
@@ -196,3 +197,13 @@ spec:
 ```
 
 [scale]: https://kubernetes.io/docs/tasks/access-kubernetes-api/custom-resources/custom-resource-definitions/#scale-subresource
+
+## Kubeconfig management
+
+Control Plane providers are expected to create and maintain a Kubeconfig
+secret for operators to gain initial access to the cluster. If a provider uses
+client certificates for authentication in these Kubeconfigs, the client
+certificate should be kept with a reasonably short expiration period and
+periodically regenerated to keep a valid set of credentials available. As an
+example, the Kubeadm Control Plane provider uses a year of validity and
+refreshes the certificate after 6 months.

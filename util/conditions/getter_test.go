@@ -91,6 +91,192 @@ func TestIsMethods(t *testing.T) {
 	g.Expect(GetLastTransitionTime(obj, "falseInfo1")).ToNot(BeNil())
 }
 
+func TestMirror(t *testing.T) {
+	foo := FalseCondition("foo", "reason foo", clusterv1.ConditionSeverityInfo, "message foo")
+	ready := TrueCondition(clusterv1.ReadyCondition)
+	readyBar := ready.DeepCopy()
+	readyBar.Type = "bar"
+
+	tests := []struct {
+		name string
+		from Getter
+		t    clusterv1.ConditionType
+		want *clusterv1.Condition
+	}{
+		{
+			name: "Returns nil when the ready condition does not exists",
+			from: getterWithConditions(foo),
+			want: nil,
+		},
+		{
+			name: "Returns ready condition from source",
+			from: getterWithConditions(ready, foo),
+			t:    "bar",
+			want: readyBar,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			got := mirror(tt.from, tt.t)
+			if tt.want == nil {
+				g.Expect(got).To(BeNil())
+				return
+			}
+			g.Expect(got).To(haveSameStateOf(tt.want))
+		})
+	}
+}
+
+func TestSummary(t *testing.T) {
+	foo := TrueCondition("foo")
+	bar := FalseCondition("bar", "reason falseInfo1", clusterv1.ConditionSeverityInfo, "message falseInfo1")
+	baz := FalseCondition("baz", "reason falseInfo2", clusterv1.ConditionSeverityInfo, "message falseInfo2")
+	existingReady := FalseCondition(clusterv1.ReadyCondition, "reason falseError1", clusterv1.ConditionSeverityError, "message falseError1") //NB. existing ready has higher priority than other conditions
+
+	tests := []struct {
+		name    string
+		from    Getter
+		options []MergeOption
+		want    *clusterv1.Condition
+	}{
+		{
+			name: "Returns nil when there are no conditions to summarize",
+			from: getterWithConditions(),
+			want: nil,
+		},
+		{
+			name: "Returns ready condition with the summary of existing conditions (with default options)",
+			from: getterWithConditions(foo, bar),
+			want: FalseCondition(clusterv1.ReadyCondition, "reason falseInfo1", clusterv1.ConditionSeverityInfo, "message falseInfo1"),
+		},
+		{
+			name:    "Returns ready condition with the summary of existing conditions (using WithStepCounter options)",
+			from:    getterWithConditions(foo, bar),
+			options: []MergeOption{WithStepCounter()},
+			want:    FalseCondition(clusterv1.ReadyCondition, "reason falseInfo1", clusterv1.ConditionSeverityInfo, "1 of 2 completed"),
+		},
+		{
+			name:    "Returns ready condition with the summary of existing conditions (using WithStepCounterIf options)",
+			from:    getterWithConditions(foo, bar),
+			options: []MergeOption{WithStepCounterIf(false)},
+			want:    FalseCondition(clusterv1.ReadyCondition, "reason falseInfo1", clusterv1.ConditionSeverityInfo, "message falseInfo1"),
+		},
+		{
+			name:    "Returns ready condition with the summary of existing conditions (using WithStepCounterIf options)",
+			from:    getterWithConditions(foo, bar),
+			options: []MergeOption{WithStepCounterIf(true)},
+			want:    FalseCondition(clusterv1.ReadyCondition, "reason falseInfo1", clusterv1.ConditionSeverityInfo, "1 of 2 completed"),
+		},
+		{
+			name:    "Returns ready condition with the summary of existing conditions (using WithStepCounterIf and WithStepCounterIfOnly options)",
+			from:    getterWithConditions(bar),
+			options: []MergeOption{WithStepCounter(), WithStepCounterIfOnly("bar")},
+			want:    FalseCondition(clusterv1.ReadyCondition, "reason falseInfo1", clusterv1.ConditionSeverityInfo, "0 of 1 completed"),
+		},
+		{
+			name:    "Returns ready condition with the summary of existing conditions (using WithStepCounterIf and WithStepCounterIfOnly options)",
+			from:    getterWithConditions(foo, bar),
+			options: []MergeOption{WithStepCounter(), WithStepCounterIfOnly("foo")},
+			want:    FalseCondition(clusterv1.ReadyCondition, "reason falseInfo1", clusterv1.ConditionSeverityInfo, "message falseInfo1"),
+		},
+		{
+			name:    "Returns ready condition with the summary of selected conditions (using WithConditions options)",
+			from:    getterWithConditions(foo, bar),
+			options: []MergeOption{WithConditions("foo")}, // bar should be ignored
+			want:    TrueCondition(clusterv1.ReadyCondition),
+		},
+		{
+			name:    "Returns ready condition with the summary of selected conditions (using WithConditions and WithStepCounter options)",
+			from:    getterWithConditions(foo, bar, baz),
+			options: []MergeOption{WithConditions("foo", "bar"), WithStepCounter()}, // baz should be ignored, total steps should be 2
+			want:    FalseCondition(clusterv1.ReadyCondition, "reason falseInfo1", clusterv1.ConditionSeverityInfo, "1 of 2 completed"),
+		},
+		{
+			name:    "Returns ready condition with the summary of selected conditions (using WithConditions and WithStepCounterIfOnly options)",
+			from:    getterWithConditions(bar),
+			options: []MergeOption{WithConditions("bar", "baz"), WithStepCounter(), WithStepCounterIfOnly("bar")}, // there is only bar, the step counter should be set and counts only a subset of conditions
+			want:    FalseCondition(clusterv1.ReadyCondition, "reason falseInfo1", clusterv1.ConditionSeverityInfo, "0 of 1 completed"),
+		},
+		{
+			name:    "Returns ready condition with the summary of selected conditions (using WithConditions and WithStepCounterIfOnly options)",
+			from:    getterWithConditions(bar, baz),
+			options: []MergeOption{WithConditions("bar", "baz"), WithStepCounter(), WithStepCounterIfOnly("bar")}, // there is also baz, so the step counter should not be set
+			want:    FalseCondition(clusterv1.ReadyCondition, "reason falseInfo1", clusterv1.ConditionSeverityInfo, "message falseInfo1"),
+		},
+		{
+			name:    "Ready condition respects merge order",
+			from:    getterWithConditions(bar, baz),
+			options: []MergeOption{WithConditions("baz", "bar")}, // baz should take precedence on bar
+			want:    FalseCondition(clusterv1.ReadyCondition, "reason falseInfo2", clusterv1.ConditionSeverityInfo, "message falseInfo2"),
+		},
+		{
+			name: "Ignores existing Ready condition when computing the summary",
+			from: getterWithConditions(existingReady, foo, bar),
+			want: FalseCondition(clusterv1.ReadyCondition, "reason falseInfo1", clusterv1.ConditionSeverityInfo, "message falseInfo1"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			got := summary(tt.from, tt.options...)
+			if tt.want == nil {
+				g.Expect(got).To(BeNil())
+				return
+			}
+			g.Expect(got).To(haveSameStateOf(tt.want))
+		})
+	}
+}
+
+func TestAggregate(t *testing.T) {
+	ready1 := TrueCondition(clusterv1.ReadyCondition)
+	ready2 := FalseCondition(clusterv1.ReadyCondition, "reason falseInfo1", clusterv1.ConditionSeverityInfo, "message falseInfo1")
+	bar := FalseCondition("bar", "reason falseError1", clusterv1.ConditionSeverityError, "message falseError1") //NB. bar has higher priority than other conditions
+
+	tests := []struct {
+		name string
+		from []Getter
+		t    clusterv1.ConditionType
+		want *clusterv1.Condition
+	}{
+		{
+			name: "Returns nil when there are no conditions to aggregate",
+			from: []Getter{},
+			want: nil,
+		},
+		{
+			name: "Returns foo condition with the aggregation of object's ready conditions",
+			from: []Getter{
+				getterWithConditions(ready1),
+				getterWithConditions(ready1),
+				getterWithConditions(ready2, bar),
+				getterWithConditions(),
+				getterWithConditions(bar),
+			},
+			t:    "foo",
+			want: FalseCondition("foo", "reason falseInfo1", clusterv1.ConditionSeverityInfo, "2 of 5 completed"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			got := aggregate(tt.from, tt.t)
+			if tt.want == nil {
+				g.Expect(got).To(BeNil())
+				return
+			}
+			g.Expect(got).To(haveSameStateOf(tt.want))
+		})
+	}
+}
+
 func getterWithConditions(conditions ...*clusterv1.Condition) Getter {
 	obj := &clusterv1.Cluster{}
 	obj.SetConditions(conditionList(conditions...))

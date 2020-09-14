@@ -18,25 +18,25 @@ package clusterctl
 
 import (
 	"context"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 
 	. "github.com/onsi/gomega"
+
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	"sigs.k8s.io/cluster-api/cmd/clusterctl/client/config"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/test/framework"
 	"sigs.k8s.io/cluster-api/test/framework/internal/log"
-
-	"sigs.k8s.io/cluster-api/cmd/clusterctl/client/config"
 )
 
 // InitManagementClusterAndWatchControllerLogsInput is the input type for InitManagementClusterAndWatchControllerLogs.
 type InitManagementClusterAndWatchControllerLogsInput struct {
-	ClusterProxy            framework.ClusterProxy
-	ClusterctlConfigPath    string
-	InfrastructureProviders []string
-	LogFolder               string
+	ClusterProxy             framework.ClusterProxy
+	ClusterctlConfigPath     string
+	InfrastructureProviders  []string
+	LogFolder                string
+	DisableMetricsCollection bool
 }
 
 // InitManagementClusterAndWatchControllerLogs initializes a management using clusterctl and setup watches for controller logs.
@@ -87,6 +87,16 @@ func InitManagementClusterAndWatchControllerLogs(ctx context.Context, input Init
 			Deployment: deployment,
 			LogPath:    filepath.Join(input.LogFolder, "controllers"),
 		})
+
+		if input.DisableMetricsCollection {
+			return
+		}
+		framework.WatchPodMetrics(ctx, framework.WatchPodMetricsInput{
+			GetLister:   client,
+			ClientSet:   input.ClusterProxy.GetClientSet(),
+			Deployment:  deployment,
+			MetricsPath: filepath.Join(input.LogFolder, "controllers"),
+		})
 	}
 }
 
@@ -94,7 +104,6 @@ func InitManagementClusterAndWatchControllerLogs(ctx context.Context, input Init
 type ApplyClusterTemplateAndWaitInput struct {
 	ClusterProxy                 framework.ClusterProxy
 	ConfigCluster                ConfigClusterInput
-	CNIManifestPath              string
 	WaitForClusterIntervals      []interface{}
 	WaitForControlPlaneIntervals []interface{}
 	WaitForMachineDeployments    []interface{}
@@ -133,6 +142,8 @@ func ApplyClusterTemplateAndWait(ctx context.Context, input ApplyClusterTemplate
 	log.Logf("Applying the cluster template yaml to the cluster")
 	Expect(input.ClusterProxy.Apply(ctx, workloadClusterTemplate)).ShouldNot(HaveOccurred())
 
+	log.Logf("Installing a CNI plugin to the workload cluster")
+
 	log.Logf("Waiting for the cluster infrastructure to be provisioned")
 	cluster := framework.DiscoveryAndWaitForCluster(ctx, framework.DiscoveryAndWaitForClusterInput{
 		Getter:    input.ClusterProxy.GetClient(),
@@ -145,14 +156,6 @@ func ApplyClusterTemplateAndWait(ctx context.Context, input ApplyClusterTemplate
 		Lister:  input.ClusterProxy.GetClient(),
 		Cluster: cluster,
 	}, input.WaitForControlPlaneIntervals...)
-
-	log.Logf("Installing a CNI plugin to the workload cluster")
-	workloadCluster := input.ClusterProxy.GetWorkloadCluster(context.TODO(), cluster.Namespace, cluster.Name)
-
-	cniYaml, err := ioutil.ReadFile(input.CNIManifestPath)
-	Expect(err).ShouldNot(HaveOccurred())
-
-	Expect(workloadCluster.Apply(context.TODO(), cniYaml)).ShouldNot(HaveOccurred())
 
 	log.Logf("Waiting for control plane to be ready")
 	framework.WaitForControlPlaneAndMachinesReady(ctx, framework.WaitForControlPlaneAndMachinesReadyInput{

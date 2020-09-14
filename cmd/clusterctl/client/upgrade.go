@@ -33,7 +33,7 @@ type PlanUpgradeOptions struct {
 
 func (c *clusterctlClient) PlanUpgrade(options PlanUpgradeOptions) ([]UpgradePlan, error) {
 	// Get the client for interacting with the management cluster.
-	cluster, err := c.clusterClientFactory(options.Kubeconfig)
+	cluster, err := c.clusterClientFactory(ClusterClientFactoryInput{kubeconfig: options.Kubeconfig})
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +89,7 @@ type ApplyUpgradeOptions struct {
 
 func (c *clusterctlClient) ApplyUpgrade(options ApplyUpgradeOptions) error {
 	// Get the client for interacting with the management cluster.
-	clusterClient, err := c.clusterClientFactory(options.Kubeconfig)
+	clusterClient, err := c.clusterClientFactory(ClusterClientFactoryInput{kubeconfig: options.Kubeconfig})
 	if err != nil {
 		return err
 	}
@@ -106,6 +106,14 @@ func (c *clusterctlClient) ApplyUpgrade(options ApplyUpgradeOptions) error {
 		return err
 	}
 	coreProvider := coreUpgradeItem.Provider
+
+	// Ensures the latest version of cert-manager.
+	// NOTE: it is safe to upgrade to latest version of cert-manager given that it provides
+	// conversion web-hooks around Issuer/Certificate kinds, so installing an older versions of providers
+	// should continue to work with the latest cert-manager.
+	if err := clusterClient.CertManager().EnsureLatestVersion(); err != nil {
+		return err
+	}
 
 	// Check if the user want a custom upgrade
 	isCustomUpgrade := options.CoreProvider != "" ||
@@ -191,6 +199,9 @@ func parseUpgradeItem(ref string, providerType clusterctlv1.ProviderType) (*clus
 			},
 			ProviderName: name,
 			Type:         string(providerType),
+			// The value for the following fields will be retrieved while
+			// creating the custom upgrade plan.
+			WatchedNamespace: "",
 		},
 		NextVersion: version,
 	}, nil

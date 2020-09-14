@@ -27,6 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -453,6 +454,12 @@ func TestGetOwnerClusterSuccessByName(t *testing.T) {
 	cluster, err := GetOwnerCluster(context.TODO(), c, objm)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(cluster).NotTo(BeNil())
+
+	// Make sure API version does not matter
+	objm.OwnerReferences[0].APIVersion = "cluster.x-k8s.io/v1alpha1234"
+	cluster, err = GetOwnerCluster(context.TODO(), c, objm)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(cluster).NotTo(BeNil())
 }
 
 func TestGetOwnerMachineSuccessByName(t *testing.T) {
@@ -474,6 +481,36 @@ func TestGetOwnerMachineSuccessByName(t *testing.T) {
 			{
 				Kind:       "Machine",
 				APIVersion: clusterv1.GroupVersion.String(),
+				Name:       "my-machine",
+			},
+		},
+		Namespace: "my-ns",
+		Name:      "my-resource-owned-by-machine",
+	}
+	machine, err := GetOwnerMachine(context.TODO(), c, objm)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(machine).NotTo(BeNil())
+}
+
+func TestGetOwnerMachineSuccessByNameFromDifferentVersion(t *testing.T) {
+	g := NewWithT(t)
+
+	scheme := runtime.NewScheme()
+	g.Expect(clusterv1.AddToScheme(scheme)).To(Succeed())
+
+	myMachine := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "my-machine",
+			Namespace: "my-ns",
+		},
+	}
+
+	c := fake.NewFakeClientWithScheme(scheme, myMachine)
+	objm := metav1.ObjectMeta{
+		OwnerReferences: []metav1.OwnerReference{
+			{
+				Kind:       "Machine",
+				APIVersion: clusterv1.GroupVersion.Group + "/v1alpha2",
 				Name:       "my-machine",
 			},
 		},
@@ -789,6 +826,50 @@ func TestIsSupportedVersionSkew(t *testing.T) {
 			if got := IsSupportedVersionSkew(tt.args.a, tt.args.b); got != tt.want {
 				t.Errorf("IsSupportedVersionSkew() = %v, want %v", got, tt.want)
 			}
+		})
+	}
+}
+
+func TestRemoveOwnerRef(t *testing.T) {
+	g := NewWithT(t)
+	ownerRefs := []metav1.OwnerReference{
+		{
+			APIVersion: "dazzlings.info/v1",
+			Kind:       "Twilight",
+			Name:       "m4g1c",
+		},
+		{
+			APIVersion: "bar.cluster.x-k8s.io/v1alpha3",
+			Kind:       "TestCluster",
+			Name:       "bar-1",
+		},
+	}
+
+	tests := []struct {
+		name        string
+		toBeRemoved metav1.OwnerReference
+	}{
+		{
+			name: "owner reference present",
+			toBeRemoved: metav1.OwnerReference{
+				APIVersion: "dazzlings.info/v1",
+				Kind:       "Twilight",
+				Name:       "m4g1c",
+			},
+		},
+		{
+			name: "owner reference not present",
+			toBeRemoved: metav1.OwnerReference{
+				APIVersion: "dazzlings.info/v1",
+				Kind:       "Twilight",
+				Name:       "abcdef",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			newOwnerRefs := RemoveOwnerRef(ownerRefs, tt.toBeRemoved)
+			g.Expect(HasOwnerRef(newOwnerRefs, tt.toBeRemoved)).NotTo(BeTrue())
 		})
 	}
 }

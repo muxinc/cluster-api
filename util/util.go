@@ -38,12 +38,14 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/version"
+	"k8s.io/client-go/rest"
 	"k8s.io/klog/klogr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/cluster-api/util/container"
 	"sigs.k8s.io/cluster-api/util/predicates"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -241,7 +243,14 @@ func GetClusterFromMetadata(ctx context.Context, c client.Client, obj metav1.Obj
 // GetOwnerCluster returns the Cluster object owning the current resource.
 func GetOwnerCluster(ctx context.Context, c client.Client, obj metav1.ObjectMeta) (*clusterv1.Cluster, error) {
 	for _, ref := range obj.OwnerReferences {
-		if ref.Kind == "Cluster" && ref.APIVersion == clusterv1.GroupVersion.String() {
+		if ref.Kind != "Cluster" {
+			continue
+		}
+		gv, err := schema.ParseGroupVersion(ref.APIVersion)
+		if err != nil {
+			return nil, errors.WithStack(err)
+		}
+		if gv.Group == clusterv1.GroupVersion.Group {
 			return GetClusterByName(ctx, c, obj.Namespace, ref.Name)
 		}
 	}
@@ -305,7 +314,11 @@ func ClusterToInfrastructureMapFunc(gvk schema.GroupVersionKind) handler.ToReque
 // GetOwnerMachine returns the Machine object owning the current resource.
 func GetOwnerMachine(ctx context.Context, c client.Client, obj metav1.ObjectMeta) (*clusterv1.Machine, error) {
 	for _, ref := range obj.OwnerReferences {
-		if ref.Kind == "Machine" && ref.APIVersion == clusterv1.GroupVersion.String() {
+		gv, err := schema.ParseGroupVersion(ref.APIVersion)
+		if err != nil {
+			return nil, err
+		}
+		if ref.Kind == "Machine" && gv.Group == clusterv1.GroupVersion.Group {
 			return GetMachineByName(ctx, c, obj.Namespace, ref.Name)
 		}
 	}
@@ -379,6 +392,14 @@ func ReplaceOwnerRef(ownerReferences []metav1.OwnerReference, source metav1.Obje
 	}
 	if fi < 0 {
 		ownerReferences = append(ownerReferences, target)
+	}
+	return ownerReferences
+}
+
+// RemoveOwnerRef returns the slice of owner references after removing the supplied owner ref
+func RemoveOwnerRef(ownerReferences []metav1.OwnerReference, inputRef metav1.OwnerReference) []metav1.OwnerReference {
+	if index := indexOwnerRef(ownerReferences, inputRef); index != -1 {
+		return append(ownerReferences[:index], ownerReferences[index+1:]...)
 	}
 	return ownerReferences
 }
@@ -618,4 +639,42 @@ func IsSupportedVersionSkew(a, b semver.Version) bool {
 		return a.Minor-b.Minor == 1
 	}
 	return b.Minor-a.Minor <= 1
+}
+
+// NewDelegatingClientFunc returns a manager.NewClientFunc to be used when creating
+// a new controller runtime manager.
+//
+// A delegating client reads from the cache and writes directly to the server.
+// This avoids getting unstructured objects directly from the server
+//
+// See issue: https://github.com/kubernetes-sigs/cluster-api/issues/1663
+func ManagerDelegatingClientFunc(cache cache.Cache, config *rest.Config, options client.Options) (client.Client, error) {
+	c, err := client.New(config, options)
+	if err != nil {
+		return nil, err
+	}
+	return &client.DelegatingClient{
+		Reader:       cache,
+		Writer:       c,
+		StatusClient: c,
+	}, nil
+}
+
+// LowestNonZeroResult compares two reconciliation results
+// and returns the one with lowest requeue time.
+func LowestNonZeroResult(i, j ctrl.Result) ctrl.Result {
+	switch {
+	case i.IsZero():
+		return j
+	case j.IsZero():
+		return i
+	case i.Requeue:
+		return i
+	case j.Requeue:
+		return j
+	case i.RequeueAfter < j.RequeueAfter:
+		return i
+	default:
+		return j
+	}
 }

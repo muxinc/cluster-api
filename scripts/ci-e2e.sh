@@ -42,9 +42,13 @@ make docker-build
 make -C test/infrastructure/docker docker-build
 
 ## Pulling cert manager images so we can pre-load in kind nodes
-docker pull quay.io/jetstack/cert-manager-cainjector:v0.11.0
-docker pull quay.io/jetstack/cert-manager-webhook:v0.11.0
-docker pull quay.io/jetstack/cert-manager-controller:v0.11.0
+docker pull quay.io/jetstack/cert-manager-cainjector:v0.16.1
+docker pull quay.io/jetstack/cert-manager-webhook:v0.16.1
+docker pull quay.io/jetstack/cert-manager-controller:v0.16.1
+
+## Pulling kind images used by tests
+docker pull kindest/node:v1.18.2
+docker pull kindest/node:v1.19.0
 
 # Configure e2e tests
 export GINKGO_FOCUS=

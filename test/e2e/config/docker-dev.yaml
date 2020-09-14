@@ -19,11 +19,11 @@ images:
   loadBehavior: mustLoad
 - name: gcr.io/k8s-staging-cluster-api/capd-manager-amd64:dev
   loadBehavior: mustLoad
-- name: quay.io/jetstack/cert-manager-cainjector:v0.11.0
+- name: quay.io/jetstack/cert-manager-cainjector:v0.16.1
   loadBehavior: tryLoad
-- name: quay.io/jetstack/cert-manager-webhook:v0.11.0
+- name: quay.io/jetstack/cert-manager-webhook:v0.16.1
   loadBehavior: tryLoad
-- name: quay.io/jetstack/cert-manager-controller:v0.11.0
+- name: quay.io/jetstack/cert-manager-controller:v0.16.1
   loadBehavior: tryLoad
 # If using Calico uncomment following lines to speed up test by pre-loading required images on nodes
 # - name: calico/kube-controllers:v3.13.1
@@ -48,6 +48,8 @@ providers:
       new: "imagePullPolicy: IfNotPresent"
     - old: "--enable-leader-election"
       new: "--enable-leader-election=false"
+    - old: --metrics-addr=127.0.0.1:8080
+      new: --metrics-addr=:8080
 
 - name: kubeadm
   type: BootstrapProvider
@@ -60,6 +62,8 @@ providers:
       new: "imagePullPolicy: IfNotPresent"
     - old: "--enable-leader-election"
       new: "--enable-leader-election=false"
+    - old: --metrics-addr=127.0.0.1:8080
+      new: --metrics-addr=:8080
 
 - name: kubeadm
   type: ControlPlaneProvider
@@ -72,6 +76,8 @@ providers:
       new: "imagePullPolicy: IfNotPresent"
     - old: "--enable-leader-election"
       new: "--enable-leader-election=false"
+    - old: --metrics-addr=127.0.0.1:8080
+      new: --metrics-addr=:8080
 
 - name: docker
   type: InfrastructureProvider
@@ -84,6 +90,8 @@ providers:
       new: "imagePullPolicy: IfNotPresent"
     - old: "--enable-leader-election"
       new: "--enable-leader-election=false"
+    - old: --metrics-addr=127.0.0.1:8080
+      new: --metrics-addr=:8080
   files:
   # Add a metadata for docker provider
   - sourcePath: "../data/infrastructure-docker/metadata.yaml"
@@ -103,6 +111,7 @@ variables:
   DOCKER_POD_CIDRS: "192.168.0.0/16"
   #CNI: "./data/cni/calico/calico.yaml"
   CNI: "./data/cni/kindnet/kindnet.yaml"
+  EXP_CLUSTER_RESOURCE_SET: "true"
 
 intervals:
   default/wait-controllers: ["3m", "10s"]

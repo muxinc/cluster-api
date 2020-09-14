@@ -95,7 +95,7 @@ func (n *NetworkRanges) String() string {
 	if n == nil {
 		return ""
 	}
-	return strings.Join(n.CIDRBlocks, "")
+	return strings.Join(n.CIDRBlocks, ",")
 }
 
 // ANCHOR_END: NetworkRanges
@@ -138,6 +138,10 @@ type ClusterStatus struct {
 	// Conditions defines current service state of the cluster.
 	// +optional
 	Conditions Conditions `json:"conditions,omitempty"`
+
+	// ObservedGeneration is the latest generation observed by the controller.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 }
 
 // ANCHOR_END: ClusterStatus
@@ -174,9 +178,14 @@ type APIEndpoint struct {
 	Port int32 `json:"port"`
 }
 
-// IsZero returns true if host and the port are zero values.
+// IsZero returns true if both host and port are zero values.
 func (v APIEndpoint) IsZero() bool {
 	return v.Host == "" && v.Port == 0
+}
+
+// IsValid returns true if both host and port are non-zero values.
+func (v APIEndpoint) IsValid() bool {
+	return v.Host != "" && v.Port != 0
 }
 
 // String returns a formatted version HOST:PORT of this APIEndpoint.

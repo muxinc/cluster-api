@@ -2,6 +2,8 @@
 
 # set defaults
 
+envsubst_cmd = "./hack/tools/bin/envsubst"
+
 settings = {
     "deploy_cert_manager": True,
     "preload_images_for_kind": True,
@@ -65,7 +67,7 @@ providers = {
     },
     "docker": {
         "context": "test/infrastructure/docker",
-        "image": "gcr.io/k8s-staging-capi-docker/capd-manager",
+        "image": "gcr.io/k8s-staging-cluster-api/capd-manager",
         "live_reload_deps": [
             "main.go",
             "go.mod",
@@ -87,7 +89,9 @@ COPY --from=tilt-helper /go/kubernetes/client/bin/kubectl /usr/bin/kubectl
     },
 }
 
-# Reads a provider's tilt-provider.json file and merges it into the providers map. An example file looks like this:
+# Reads a provider's tilt-provider.json file and merges it into the providers map.
+# A list of dictionaries is also supported by enclosing it in brackets []
+# An example file looks like this:
 # {
 #     "name": "aws",
 #     "config": {
@@ -103,14 +107,20 @@ def load_provider_tiltfiles():
     for repo in provider_repos:
         file = repo + "/tilt-provider.json"
         provider_details = read_json(file, default = {})
-        provider_name = provider_details["name"]
-        provider_config = provider_details["config"]
-        provider_config["context"] = repo
-        providers[provider_name] = provider_config
+        if type(provider_details) != type([]):
+            provider_details = [provider_details]
+        for item in provider_details:
+            provider_name = item["name"]
+            provider_config = item["config"]
+            if "context" in provider_config:
+                provider_config["context"] = repo + "/" + provider_config["context"]
+            else:
+                provider_config["context"] = repo
+            providers[provider_name] = provider_config
 
 tilt_helper_dockerfile_header = """
 # Tilt image
-FROM golang:1.13.8 as tilt-helper
+FROM golang:1.13.14 as tilt-helper
 # Support live reloading with Tilt
 RUN wget --output-document /restart.sh --quiet https://raw.githubusercontent.com/windmilleng/rerun-process-wrapper/master/restart.sh  && \
     wget --output-document /start.sh --quiet https://raw.githubusercontent.com/windmilleng/rerun-process-wrapper/master/start.sh && \
@@ -123,6 +133,33 @@ WORKDIR /
 COPY --from=tilt-helper /start.sh .
 COPY --from=tilt-helper /restart.sh .
 COPY manager .
+"""
+
+cert_manager_test_resources = """
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cert-manager-test
+---
+apiVersion: cert-manager.io/v1alpha2
+kind: Issuer
+metadata:
+  name: test-selfsigned
+  namespace: cert-manager-test
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1alpha2
+kind: Certificate
+metadata:
+  name: selfsigned-cert
+  namespace: cert-manager-test
+spec:
+  dnsNames:
+    - example.com
+  secretName: selfsigned-cert-tls
+  issuerRef:
+    name: test-selfsigned
 """
 
 # Configures a provider by doing the following:
@@ -180,31 +217,48 @@ def enable_provider(name):
         ],
     )
 
-    # Apply the kustomized yaml for this provider
-    yaml = str(kustomize(context + "/config"))
+    # Copy all the substitutions from the user's tilt-settings.json into the environment. Otherwise, the substitutions
+    # are not available and their placeholders will be replaced with the empty string when we call kustomize +
+    # envsubst below.
     substitutions = settings.get("kustomize_substitutions", {})
-    for substitution in substitutions:
-        value = substitutions[substitution]
-        yaml = yaml.replace("${" + substitution + "}", value)
+    os.environ.update(substitutions)
+
+    # Apply the kustomized yaml for this provider
+    yaml = str(kustomize_with_envsubst(context + "/config"))
     k8s_yaml(blob(yaml))
 
 # Prepull all the cert-manager images to your local environment and then load them directly into kind. This speeds up
 # setup if you're repeatedly destroying and recreating your kind cluster, as it doesn't have to pull the images over
 # the network each time.
 def deploy_cert_manager():
-    registry = "quay.io/jetstack"
-    version = "v0.11.0"
-    images = ["cert-manager-controller", "cert-manager-cainjector", "cert-manager-webhook"]
+    registry = settings.get("cert_manager_registry", "quay.io/jetstack")
+    version = settings.get("cert_manager_version", "v0.16.1")
 
-    if settings.get("preload_images_for_kind"):
-        for image in images:
-            local("docker pull {}/{}:{}".format(registry, image, version))
-            local("kind load docker-image --name {} {}/{}:{}".format(settings.get("kind_cluster_name"), registry, image, version))
+    # check if cert-mamager is already installed, otherwise pre-load images & apply the manifest
+    # NB. this is required until https://github.com/jetstack/cert-manager/issues/3121 is addressed otherwise
+    # when applying the manifest twice to same cluster kubectl get stuck
+    existsCheck = str(local("kubectl get namespaces"))
+    if existsCheck.find("cert-manager") == -1:
+        # pre-load cert-manager images in kind
+        images = ["cert-manager-controller", "cert-manager-cainjector", "cert-manager-webhook"]
+        if settings.get("preload_images_for_kind"):
+            for image in images:
+                local("docker pull {}/{}:{}".format(registry, image, version))
+                local("kind load docker-image --name {} {}/{}:{}".format(settings.get("kind_cluster_name"), registry, image, version))
 
-    local("kubectl apply -f https://github.com/jetstack/cert-manager/releases/download/{}/cert-manager.yaml".format(version))
+        # apply the cert-manager manifest
+        local("kubectl apply -f https://github.com/jetstack/cert-manager/releases/download/{}/cert-manager.yaml".format(version))
 
-    # wait for the service to become available
-    local("kubectl wait --for=condition=Available --timeout=300s apiservice v1beta1.webhook.cert-manager.io")
+    # verifies cert-manager is properly working (https://cert-manager.io/docs/installation/kubernetes/#verifying-the-installation)
+    # 1. wait for the cert-manager to be running
+    local("kubectl wait --for=condition=Available --timeout=300s -n cert-manager deployment/cert-manager")
+    local("kubectl wait --for=condition=Available --timeout=300s -n cert-manager deployment/cert-manager-cainjector")
+    local("kubectl wait --for=condition=Available --timeout=300s -n cert-manager deployment/cert-manager-webhook")
+
+    # 2. create a test certificate
+    local("cat << EOF | kubectl apply -f - " + cert_manager_test_resources + "EOF")
+    local("kubectl wait --for=condition=Ready --timeout=300s -n cert-manager-test certificate/selfsigned-cert ")
+    local("cat << EOF | kubectl delete -f - " + cert_manager_test_resources + "EOF")
 
 # Users may define their own Tilt customizations in tilt.d. This directory is excluded from git and these files will
 # not be checked in to version control.
@@ -215,10 +269,14 @@ def include_user_tilt_files():
 
 # Enable core cluster-api plus everything listed in 'enable_providers' in tilt-settings.json
 def enable_providers():
+    local("make envsubst")
     user_enable_providers = settings.get("enable_providers", [])
     union_enable_providers = {k: "" for k in user_enable_providers + always_enable_providers}.keys()
     for name in union_enable_providers:
         enable_provider(name)
+
+def kustomize_with_envsubst(path):
+    return str(local("kustomize build {} | {}".format(path, envsubst_cmd), quiet = True))
 
 ##############################
 # Actual work happens here

@@ -19,6 +19,7 @@ package conditions
 import (
 	"fmt"
 	"sort"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -41,31 +42,38 @@ func Set(to Setter, condition *clusterv1.Condition) {
 		return
 	}
 
+	// Check if the new conditions already exists, and change it only if there is a status
+	// transition (otherwise we should preserve the current last transition time)-
 	conditions := to.GetConditions()
-	newConditions := make(clusterv1.Conditions, 0, len(conditions))
 	exists := false
-	condition.LastTransitionTime = metav1.Now()
 	for i := range conditions {
 		existingCondition := conditions[i]
 		if existingCondition.Type == condition.Type {
 			exists = true
 			if !hasSameState(&existingCondition, condition) {
-				newConditions = append(newConditions, *condition)
-				continue
+				condition.LastTransitionTime = metav1.NewTime(time.Now().UTC().Truncate(time.Second))
+				conditions[i] = *condition
+				break
 			}
+			condition.LastTransitionTime = existingCondition.LastTransitionTime
+			break
 		}
-		newConditions = append(newConditions, existingCondition)
 	}
+
+	// If the condition does not exist, add it, setting the transition time only if not already set
 	if !exists {
-		newConditions = append(newConditions, *condition)
+		if condition.LastTransitionTime.IsZero() {
+			condition.LastTransitionTime = metav1.NewTime(time.Now().UTC().Truncate(time.Second))
+		}
+		conditions = append(conditions, *condition)
 	}
 
 	// Sorts conditions for convenience of the consumer, i.e. kubectl.
-	sort.Slice(newConditions, func(i, j int) bool {
-		return lexicographicLess(&newConditions[i], &newConditions[j])
+	sort.Slice(conditions, func(i, j int) bool {
+		return lexicographicLess(&conditions[i], &conditions[j])
 	})
 
-	to.SetConditions(newConditions)
+	to.SetConditions(conditions)
 }
 
 // TrueCondition returns a condition with Status=True and the given type.
@@ -110,6 +118,26 @@ func MarkUnknown(to Setter, t clusterv1.ConditionType, reason, messageFormat str
 // MarkFalse sets Status=False for the condition with the given type.
 func MarkFalse(to Setter, t clusterv1.ConditionType, reason string, severity clusterv1.ConditionSeverity, messageFormat string, messageArgs ...interface{}) {
 	Set(to, FalseCondition(t, reason, severity, messageFormat, messageArgs...))
+}
+
+// SetSummary sets a Ready condition with the summary of all the conditions existing
+// on an object. If the object does not have other conditions, no summary condition is generated.
+func SetSummary(to Setter, options ...MergeOption) {
+	Set(to, summary(to, options...))
+}
+
+// SetMirror creates a new condition by mirroring the the Ready condition from a dependent object;
+// if the Ready condition does not exists in the source object, no target conditions is generated.
+func SetMirror(to Setter, targetCondition clusterv1.ConditionType, from Getter, options ...MirrorOptions) {
+	Set(to, mirror(from, targetCondition, options...))
+}
+
+// SetAggregate creates a new condition with the aggregation of all the the Ready condition
+// from a list of dependent objects; if the Ready condition does not exists in one of the source object,
+// the object is excluded from the aggregation; if none of the source object have ready condition,
+// no target conditions is generated.
+func SetAggregate(to Setter, targetCondition clusterv1.ConditionType, from []Getter, options ...MergeOption) {
+	Set(to, aggregate(from, targetCondition, options...))
 }
 
 // Delete deletes the condition with the given type.

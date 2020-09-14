@@ -39,13 +39,17 @@ but is the final step in fully upgrading a Cluster API managed cluster.
 
 It is recommended to manage workload machines with one or more `MachineDeployment`s. `MachineDeployment`s will
 transparently manage `MachineSet`s and `Machine`s to allow for a seamless scaling experience. A modification to the
-`MachineDeployment`s spec will begin a rolling update of the workload machines.
+`MachineDeployment`s spec will begin a rolling update of the workload machines. Follow
+[these instructions](./change-machine-template.md) for changing the
+template for an existing `MachineDeployment`.
 
 For a more in-depth look at how `MachineDeployments` manage scaling events, take a look at the [`MachineDeployment`
 controller documentation](../developer/architecture/controllers/machine-deployment.md) and the [`MachineSet` controller
 documentation](../developer/architecture/controllers/machine-set.md).
 
 ### Adopting existing machines into KubeadmControlPlane management
+
+WARNING: If you are adopting Machines that were created on a v1alpha2 cluster, you must use a version with the fix for [#3144](https://github.com/kubernetes-sigs/cluster-api/issues/3144) to perform the adoption or your cluster will be broken.
 
 If your cluster has existing machines labeled with `cluster.x-k8s.io/control-plane`, you may opt in to management of those machines by creating a new KubeadmControlPlane object and updating the associated Cluster object's `controlPlaneRef` like so:
 
@@ -75,3 +79,10 @@ Caveats:
     * `kubeadmConfigSpec.clusterConfiguration.scheduler.extraArgs`
     * Anything underneath `kubeadmConfigSpec.clusterConfiguration.etcd`
     * etc.
+
+### Kubeconfig management
+
+KCP will generate and manage the admin Kubeconfig for clusters. The client
+certificate for the admin user is created with a valid lifespan of a year, and
+will be automatically regenerated when the cluster is reconciled and has less
+than 6 months of validity remaining.

@@ -18,6 +18,7 @@ package framework
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -145,7 +146,7 @@ func dumpObject(resource runtime.Object, logPath string) {
 	Expect(err).ToNot(HaveOccurred(), "Failed to open %s", resourceFilePath)
 	defer f.Close()
 
-	Expect(ioutil.WriteFile(f.Name(), resourceYAML, 0644)).To(Succeed(), "Failed to write %s", resourceFilePath)
+	Expect(ioutil.WriteFile(f.Name(), resourceYAML, 0600)).To(Succeed(), "Failed to write %s", resourceFilePath)
 }
 
 // capiProviderOptions returns a set of ListOptions that allows to identify all the objects belonging to Cluster API providers.
@@ -171,4 +172,13 @@ func CreateRelatedResources(ctx context.Context, input CreateRelatedResourcesInp
 			return input.Creator.Create(ctx, obj)
 		}, intervals...).Should(Succeed())
 	}
+}
+
+// PrettyPrint returns a formatted JSON version of the object given.
+func PrettyPrint(v interface{}) string {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err.Error()
+	}
+	return string(b)
 }

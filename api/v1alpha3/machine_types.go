@@ -37,6 +37,18 @@ const (
 
 	// MachineDeploymentLabelName is the label set on machines if they're controlled by MachineDeployment
 	MachineDeploymentLabelName = "cluster.x-k8s.io/deployment-name"
+
+	// PreDrainDeleteHookAnnotationPrefix annotation specifies the prefix we
+	// search each annotation for during the pre-drain.delete lifecycle hook
+	// to pause reconciliation of deletion. These hooks will prevent removal of
+	// draining the associated node until all are removed.
+	PreDrainDeleteHookAnnotationPrefix = "pre-drain.delete.hook.machine.cluster.x-k8s.io"
+
+	// PreTerminateDeleteHookAnnotationPrefix annotation specifies the prefix we
+	// search each annotation for during the pre-terminate.delete lifecycle hook
+	// to pause reconciliation of deletion. These hooks will prevent removal of
+	// an instance from an infrastructure provider until all are removed.
+	PreTerminateDeleteHookAnnotationPrefix = "pre-terminate.delete.hook.machine.cluster.x-k8s.io"
 )
 
 // ANCHOR: MachineSpec
@@ -155,6 +167,14 @@ type MachineStatus struct {
 	// InfrastructureReady is the state of the infrastructure provider.
 	// +optional
 	InfrastructureReady bool `json:"infrastructureReady"`
+
+	// ObservedGeneration is the latest generation observed by the controller.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// Conditions defines current service state of the Machine.
+	// +optional
+	Conditions Conditions `json:"conditions,omitempty"`
 }
 
 // ANCHOR_END: MachineStatus
@@ -216,6 +236,7 @@ type Bootstrap struct {
 // +kubebuilder:storageversion
 // +kubebuilder:printcolumn:name="ProviderID",type="string",JSONPath=".spec.providerID",description="Provider ID"
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase",description="Machine status such as Terminating/Pending/Running/Failed etc"
+// +kubebuilder:printcolumn:name="Version",type="string",JSONPath=".spec.version",description="Kubernetes version associated with this Machine"
 // +kubebuilder:printcolumn:name="NodeName",type="string",JSONPath=".status.nodeRef.name",description="Node name associated with this machine",priority=1
 
 // Machine is the Schema for the machines API
@@ -225,6 +246,14 @@ type Machine struct {
 
 	Spec   MachineSpec   `json:"spec,omitempty"`
 	Status MachineStatus `json:"status,omitempty"`
+}
+
+func (m *Machine) GetConditions() Conditions {
+	return m.Status.Conditions
+}
+
+func (m *Machine) SetConditions(conditions Conditions) {
+	m.Status.Conditions = conditions
 }
 
 // +kubebuilder:object:root=true

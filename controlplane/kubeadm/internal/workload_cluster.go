@@ -18,6 +18,7 @@ package internal
 
 import (
 	"context"
+	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -43,9 +44,9 @@ import (
 )
 
 const (
-	kubeProxyKey        = "kube-proxy"
-	kubeadmConfigKey    = "kubeadm-config"
-	labelNodeRoleMaster = "node-role.kubernetes.io/master"
+	kubeProxyKey              = "kube-proxy"
+	kubeadmConfigKey          = "kubeadm-config"
+	labelNodeRoleControlPlane = "node-role.kubernetes.io/master"
 )
 
 var (
@@ -88,7 +89,7 @@ type Workload struct {
 func (w *Workload) getControlPlaneNodes(ctx context.Context) (*corev1.NodeList, error) {
 	nodes := &corev1.NodeList{}
 	labels := map[string]string{
-		labelNodeRoleMaster: "",
+		labelNodeRoleControlPlane: "",
 	}
 
 	if err := w.Client.List(ctx, nodes, ctrlclient.MatchingLabels(labels)); err != nil {
@@ -236,19 +237,23 @@ func (w *Workload) RemoveMachineFromKubeadmConfigMap(ctx context.Context, machin
 
 // RemoveNodeFromKubeadmConfigMap removes the entry for the node from the kubeadm configmap.
 func (w *Workload) RemoveNodeFromKubeadmConfigMap(ctx context.Context, name string) error {
-	configMapKey := ctrlclient.ObjectKey{Name: kubeadmConfigKey, Namespace: metav1.NamespaceSystem}
-	kubeadmConfigMap, err := w.getConfigMap(ctx, configMapKey)
-	if err != nil {
-		return err
-	}
-	config := &kubeadmConfig{ConfigMap: kubeadmConfigMap}
-	if err := config.RemoveAPIEndpoint(name); err != nil {
-		return err
-	}
-	if err := w.Client.Update(ctx, config.ConfigMap); err != nil {
-		return errors.Wrap(err, "error updating kubeadm ConfigMap")
-	}
-	return nil
+	return util.Retry(func() (bool, error) {
+		configMapKey := ctrlclient.ObjectKey{Name: kubeadmConfigKey, Namespace: metav1.NamespaceSystem}
+		kubeadmConfigMap, err := w.getConfigMap(ctx, configMapKey)
+		if err != nil {
+			Log.Error(err, "unable to get kubeadmConfigMap")
+			return false, nil
+		}
+		config := &kubeadmConfig{ConfigMap: kubeadmConfigMap}
+		if err := config.RemoveAPIEndpoint(name); err != nil {
+			return false, err
+		}
+		if err := w.Client.Update(ctx, config.ConfigMap); err != nil {
+			Log.Error(err, "error updating kubeadm ConfigMap")
+			return false, nil
+		}
+		return true, nil
+	}, 5)
 }
 
 // ClusterStatus holds stats information about the cluster.
@@ -311,7 +316,7 @@ func generateClientCert(caCertEncoded, caKeyEncoded []byte) (tls.Certificate, er
 	return tls.X509KeyPair(certs.EncodeCertPEM(x509Cert), certs.EncodePrivateKeyPEM(privKey))
 }
 
-func newClientCert(caCert *x509.Certificate, key *rsa.PrivateKey, caKey *rsa.PrivateKey) (*x509.Certificate, error) {
+func newClientCert(caCert *x509.Certificate, key *rsa.PrivateKey, caKey crypto.Signer) (*x509.Certificate, error) {
 	cfg := certs.Config{
 		CommonName: "cluster-api.x-k8s.io",
 	}
@@ -370,6 +375,11 @@ func checkNodeNoExecuteCondition(node corev1.Node) error {
 
 // UpdateKubeProxyImageInfo updates kube-proxy image in the kube-proxy DaemonSet.
 func (w *Workload) UpdateKubeProxyImageInfo(ctx context.Context, kcp *controlplanev1.KubeadmControlPlane) error {
+	// Return early if we've been asked to skip kube-proxy upgrades entirely.
+	if _, ok := kcp.Annotations[controlplanev1.SkipKubeProxyAnnotation]; ok {
+		return nil
+	}
+
 	ds := &appsv1.DaemonSet{}
 
 	if err := w.Client.Get(ctx, ctrlclient.ObjectKey{Name: kubeProxyKey, Namespace: metav1.NamespaceSystem}, ds); err != nil {

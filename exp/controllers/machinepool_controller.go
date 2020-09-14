@@ -33,7 +33,6 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/controllers/external"
 	"sigs.k8s.io/cluster-api/controllers/remote"
-	capierrors "sigs.k8s.io/cluster-api/errors"
 	expv1 "sigs.k8s.io/cluster-api/exp/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
@@ -137,7 +136,12 @@ func (r *MachinePoolReconciler) Reconcile(req ctrl.Request) (_ ctrl.Result, rete
 		// TODO(jpang): add support for metrics.
 
 		// Always attempt to patch the object and status after each reconciliation.
-		if err := patchHelper.Patch(ctx, mp); err != nil {
+		// Patch ObservedGeneration only if the reconciliation completed successfully
+		patchOpts := []patch.Option{}
+		if reterr == nil {
+			patchOpts = append(patchOpts, patch.WithStatusObservedGeneration{})
+		}
+		if err := patchHelper.Patch(ctx, mp, patchOpts...); err != nil {
 			reterr = kerrors.NewAggregate([]error{reterr, err})
 		}
 	}()
@@ -147,6 +151,12 @@ func (r *MachinePoolReconciler) Reconcile(req ctrl.Request) (_ ctrl.Result, rete
 		mp.Labels = make(map[string]string)
 	}
 	mp.Labels[clusterv1.ClusterLabelName] = mp.Spec.ClusterName
+
+	// Add finalizer first if not exist to avoid the race condition between init and delete
+	if !controllerutil.ContainsFinalizer(mp, expv1.MachinePoolFinalizer) {
+		controllerutil.AddFinalizer(mp, expv1.MachinePoolFinalizer)
+		return ctrl.Result{}, nil
+	}
 
 	// Handle deletion reconciliation loop.
 	if !mp.ObjectMeta.DeletionTimestamp.IsZero() {
@@ -158,9 +168,6 @@ func (r *MachinePoolReconciler) Reconcile(req ctrl.Request) (_ ctrl.Result, rete
 }
 
 func (r *MachinePoolReconciler) reconcile(ctx context.Context, cluster *clusterv1.Cluster, mp *expv1.MachinePool) (ctrl.Result, error) {
-	logger := r.Log.WithValues("machinepool", mp.Name, "namespace", mp.Namespace)
-	logger = logger.WithValues("cluster", cluster.Name)
-
 	// Ensure the MachinePool is owned by the Cluster it belongs to.
 	mp.OwnerReferences = util.EnsureOwnerRef(mp.OwnerReferences, metav1.OwnerReference{
 		APIVersion: cluster.APIVersion,
@@ -169,31 +176,25 @@ func (r *MachinePoolReconciler) reconcile(ctx context.Context, cluster *clusterv
 		UID:        cluster.UID,
 	})
 
-	// If the MachinePool doesn't have a finalizer, add one.
-	controllerutil.AddFinalizer(mp, expv1.MachinePoolFinalizer)
-
-	// Call the inner reconciliation methods.
-	reconciliationErrors := []error{
-		r.reconcileBootstrap(ctx, cluster, mp),
-		r.reconcileInfrastructure(ctx, cluster, mp),
-		r.reconcileNodeRefs(ctx, cluster, mp),
+	phases := []func(context.Context, *clusterv1.Cluster, *expv1.MachinePool) (ctrl.Result, error){
+		r.reconcileBootstrap,
+		r.reconcileInfrastructure,
+		r.reconcileNodeRefs,
 	}
 
-	// Parse the errors, making sure we record if there is a RequeueAfterError.
 	res := ctrl.Result{}
 	errs := []error{}
-	for _, err := range reconciliationErrors {
-		if requeueErr, ok := errors.Cause(err).(capierrors.HasRequeueAfterError); ok {
-			// Only record and log the first RequeueAfterError.
-			if !res.Requeue {
-				res.Requeue = true
-				res.RequeueAfter = requeueErr.GetRequeueAfter()
-				logger.Error(err, "Reconciliation for MachinePool asked to requeue")
-			}
+	for _, phase := range phases {
+		// Call the inner reconciliation methods.
+		phaseResult, err := phase(ctx, cluster, mp)
+		if err != nil {
+			errs = append(errs, err)
+		}
+		if len(errs) > 0 {
 			continue
 		}
 
-		errs = append(errs, err)
+		res = util.LowestNonZeroResult(res, phaseResult)
 	}
 	return res, kerrors.NewAggregate(errs)
 }

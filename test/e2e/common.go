@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"strings"
 
 	. "github.com/onsi/ginkgo"
 
@@ -36,6 +35,7 @@ import (
 const (
 	KubernetesVersion            = "KUBERNETES_VERSION"
 	CNIPath                      = "CNI"
+	CNIResources                 = "CNI_RESOURCES"
 	KubernetesVersionUpgradeFrom = "KUBERNETES_VERSION_UPGRADE_FROM"
 	KubernetesVersionUpgradeTo   = "KUBERNETES_VERSION_UPGRADE_TO"
 	EtcdVersionUpgradeTo         = "ETCD_VERSION_UPGRADE_TO"
@@ -94,7 +94,7 @@ func HaveValidVersion(version string) types.GomegaMatcher {
 type validVersionMatcher struct{ version string }
 
 func (m *validVersionMatcher) Match(actual interface{}) (success bool, err error) {
-	if _, err := semver.Parse(strings.TrimPrefix(strings.TrimSpace(m.version), "v")); err != nil {
+	if _, err := semver.ParseTolerant(m.version); err != nil {
 		return false, err
 	}
 	return true, nil

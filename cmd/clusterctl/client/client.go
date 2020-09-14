@@ -40,6 +40,9 @@ type Client interface {
 	// GetClusterTemplate returns a workload cluster template.
 	GetClusterTemplate(options GetClusterTemplateOptions) (Template, error)
 
+	// GetKubeconfig returns the kubeconfig of the workload cluster.
+	GetKubeconfig(options GetKubeconfigOptions) (string, error)
+
 	// Delete deletes providers from a management cluster.
 	Delete(options DeleteOptions) error
 
@@ -55,6 +58,20 @@ type Client interface {
 
 	// ApplyUpgrade executes an upgrade plan.
 	ApplyUpgrade(options ApplyUpgradeOptions) error
+
+	// ProcessYAML provides a direct way to process a yaml and inspect its
+	// variables.
+	ProcessYAML(options ProcessYAMLOptions) (YamlPrinter, error)
+}
+
+// YamlPrinter exposes methods that prints the processed template and
+// variables.
+type YamlPrinter interface {
+	// Variables required by the template.
+	Variables() []string
+
+	// Yaml returns yaml defining all the cluster template objects as a byte array.
+	Yaml() ([]byte, error)
 }
 
 // clusterctlClient implements Client.
@@ -64,8 +81,21 @@ type clusterctlClient struct {
 	clusterClientFactory    ClusterClientFactory
 }
 
-type RepositoryClientFactory func(config.Provider) (repository.Client, error)
-type ClusterClientFactory func(Kubeconfig) (cluster.Client, error)
+// RepositoryClientFactoryInput represents the inputs required by the
+// RepositoryClientFactory
+type RepositoryClientFactoryInput struct {
+	provider  Provider
+	processor Processor
+}
+type RepositoryClientFactory func(RepositoryClientFactoryInput) (repository.Client, error)
+
+// ClusterClientFactoryInput reporesents the inputs required by the
+// ClusterClientFactory
+type ClusterClientFactoryInput struct {
+	kubeconfig Kubeconfig
+	processor  Processor
+}
+type ClusterClientFactory func(ClusterClientFactoryInput) (cluster.Client, error)
 
 // Ensure clusterctlClient implements Client.
 var _ Client = &clusterctlClient{}
@@ -130,17 +160,25 @@ func newClusterctlClient(path string, options ...Option) (*clusterctlClient, err
 	return client, nil
 }
 
-// defaultClusterFactory is a ClusterClientFactory func the uses the default client provided by the cluster low level library.
-func defaultClusterFactory(configClient config.Client) func(kubeconfig Kubeconfig) (cluster.Client, error) {
-	return func(kubeconfig Kubeconfig) (cluster.Client, error) {
-		// Kubeconfig is a type alias to cluster.Kubeconfig
-		return cluster.New(cluster.Kubeconfig(kubeconfig), configClient), nil
+// defaultRepositoryFactory is a RepositoryClientFactory func the uses the default client provided by the repository low level library.
+func defaultRepositoryFactory(configClient config.Client) RepositoryClientFactory {
+	return func(input RepositoryClientFactoryInput) (repository.Client, error) {
+		return repository.New(
+			input.provider,
+			configClient,
+			repository.InjectYamlProcessor(input.processor),
+		)
 	}
 }
 
-// defaultRepositoryFactory is a RepositoryClientFactory func the uses the default client provided by the repository low level library.
-func defaultRepositoryFactory(configClient config.Client) func(providerConfig config.Provider) (repository.Client, error) {
-	return func(providerConfig config.Provider) (repository.Client, error) {
-		return repository.New(providerConfig, configClient)
+// defaultClusterFactory is a ClusterClientFactory func the uses the default client provided by the cluster low level library.
+func defaultClusterFactory(configClient config.Client) ClusterClientFactory {
+	return func(input ClusterClientFactoryInput) (cluster.Client, error) {
+		return cluster.New(
+			// Kubeconfig is a type alias to cluster.Kubeconfig
+			cluster.Kubeconfig(input.kubeconfig),
+			configClient,
+			cluster.InjectYamlProcessor(input.processor),
+		), nil
 	}
 }
