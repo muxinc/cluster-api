@@ -29,7 +29,7 @@ import (
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
-	utilyaml "sigs.k8s.io/cluster-api/util/yaml"
+	utilyaml "github.com/muxinc/cluster-api/util/yaml"
 )
 
 const (

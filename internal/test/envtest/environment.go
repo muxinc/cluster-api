@@ -48,15 +48,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
-	"sigs.k8s.io/cluster-api/cmd/clusterctl/log"
-	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
-	addonsv1 "sigs.k8s.io/cluster-api/exp/addons/api/v1beta1"
-	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
-	"sigs.k8s.io/cluster-api/internal/test/builder"
-	"sigs.k8s.io/cluster-api/util/kubeconfig"
-	"sigs.k8s.io/cluster-api/webhooks"
+	clusterv1 "github.com/muxinc/cluster-api/api/v1beta1"
+	bootstrapv1 "github.com/muxinc/cluster-api/bootstrap/kubeadm/api/v1beta1"
+	"github.com/muxinc/cluster-api/cmd/clusterctl/log"
+	controlplanev1 "github.com/muxinc/cluster-api/controlplane/kubeadm/api/v1beta1"
+	addonsv1 "github.com/muxinc/cluster-api/exp/addons/api/v1beta1"
+	expv1 "github.com/muxinc/cluster-api/exp/api/v1beta1"
+	"github.com/muxinc/cluster-api/internal/test/builder"
+	"github.com/muxinc/cluster-api/util/kubeconfig"
+	"github.com/muxinc/cluster-api/webhooks"
 )
 
 func init() {

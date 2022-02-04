@@ -21,8 +21,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/cluster-api/util"
+	clusterv1 "github.com/muxinc/cluster-api/api/v1beta1"
+	"github.com/muxinc/cluster-api/util"
 )
 
 // UnstructuredGetter return a Getter object that can read conditions from an Unstructured object.
