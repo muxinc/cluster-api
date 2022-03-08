@@ -21,22 +21,17 @@ import (
 	"math/rand"
 	"sort"
 	"strings"
-	"testing"
 
-	"github.com/google/go-cmp/cmp"
 	fuzz "github.com/google/gofuzz"
 	clusterv1 "github.com/muxinc/cluster-api/api/v1beta1"
 	"github.com/muxinc/cluster-api/util"
-	"github.com/onsi/gomega"
 	"github.com/pkg/errors"
 	"k8s.io/apimachinery/pkg/api/apitesting/fuzzer"
-	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metafuzzer "k8s.io/apimachinery/pkg/apis/meta/fuzzer"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	runtimeserializer "k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/util/json"
-	"sigs.k8s.io/controller-runtime/pkg/conversion"
 )
 
 const (
