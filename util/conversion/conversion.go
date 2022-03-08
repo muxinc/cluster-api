@@ -52,42 +52,6 @@ var (
 	contract = clusterv1.GroupVersion.String()
 )
 
-// UpdateReferenceAPIContract takes a client and object reference, queries the API Server for
-// the Custom Resource Definition and looks which one is the stored version available.
-//
-// The object passed as input is modified in place if an updated compatible version is found.
-func UpdateReferenceAPIContract(ctx context.Context, c client.Client, ref *corev1.ObjectReference) error {
-	log := ctrl.LoggerFrom(ctx)
-	gvk := ref.GroupVersionKind()
-
-	metadata, err := util.GetGVKMetadata(ctx, c, gvk)
-	if err != nil {
-		log.Info("Cannot retrieve CRD with metadata only client, falling back to slower listing", "err", err.Error())
-		// Fallback to slower and more memory intensive method to get the full CRD.
-		crd, err := util.GetCRDWithContract(ctx, c, gvk, contract)
-		if err != nil {
-			return err
-		}
-		metadata = &metav1.PartialObjectMetadata{
-			TypeMeta:   crd.TypeMeta,
-			ObjectMeta: crd.ObjectMeta,
-		}
-	}
-
-	chosen, err := getLatestAPIVersionFromContract(metadata)
-	if err != nil {
-		return err
-	}
-
-	// Modify the GroupVersionKind with the new version.
-	if gvk.Version != chosen {
-		gvk.Version = chosen
-		ref.SetGroupVersionKind(gvk)
-	}
-
-	return nil
-}
-
 func getLatestAPIVersionFromContract(metadata metav1.Object) (string, error) {
 	labels := metadata.GetLabels()
 
