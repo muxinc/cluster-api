@@ -329,7 +329,8 @@ func GetGVKMetadata(ctx context.Context, c client.Client, gvk schema.GroupVersio
 	meta := &metav1.PartialObjectMetadata{}
 	meta.SetName(fmt.Sprintf("%s.%s", flect.Pluralize(strings.ToLower(gvk.Kind)), gvk.Group))
 	meta.SetGroupVersionKind(apiextensionsv1.SchemeGroupVersion.WithKind("CustomResourceDefinition"))
-	if err := c.Get(ctx, client.ObjectKeyFromObject(meta), meta); err != nil {
+	k, _ := client.ObjectKeyFromObject(meta)
+	if err := c.Get(ctx, k, meta); err != nil {
 		return meta, errors.Wrap(err, "failed to retrieve metadata from GVK resource")
 	}
 	return meta, nil
