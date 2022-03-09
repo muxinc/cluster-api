@@ -35,14 +35,10 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8sversion "k8s.io/apimachinery/pkg/version"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 const (
@@ -189,37 +185,6 @@ func ObjectKey(object metav1.Object) client.ObjectKey {
 	}
 }
 
-// ClusterToInfrastructureMapFunc returns a handler.ToRequestsFunc that watches for
-// Cluster events and returns reconciliation requests for an infrastructure provider object.
-func ClusterToInfrastructureMapFunc(gvk schema.GroupVersionKind) handler.MapFunc {
-	return func(o client.Object) []reconcile.Request {
-		c, ok := o.(*clusterv1.Cluster)
-		if !ok {
-			return nil
-		}
-
-		// Return early if the InfrastructureRef is nil.
-		if c.Spec.InfrastructureRef == nil {
-			return nil
-		}
-		gk := gvk.GroupKind()
-		// Return early if the GroupKind doesn't match what we expect.
-		infraGK := c.Spec.InfrastructureRef.GroupVersionKind().GroupKind()
-		if gk != infraGK {
-			return nil
-		}
-
-		return []reconcile.Request{
-			{
-				NamespacedName: client.ObjectKey{
-					Namespace: c.Namespace,
-					Name:      c.Spec.InfrastructureRef.Name,
-				},
-			},
-		}
-	}
-}
-
 // GetOwnerMachine returns the Machine object owning the current resource.
 func GetOwnerMachine(ctx context.Context, c client.Client, obj metav1.ObjectMeta) (*clusterv1.Machine, error) {
 	for _, ref := range obj.OwnerReferences {
@@ -242,33 +207,6 @@ func GetMachineByName(ctx context.Context, c client.Client, namespace, name stri
 		return nil, err
 	}
 	return m, nil
-}
-
-// MachineToInfrastructureMapFunc returns a handler.ToRequestsFunc that watches for
-// Machine events and returns reconciliation requests for an infrastructure provider object.
-func MachineToInfrastructureMapFunc(gvk schema.GroupVersionKind) handler.MapFunc {
-	return func(o client.Object) []reconcile.Request {
-		m, ok := o.(*clusterv1.Machine)
-		if !ok {
-			return nil
-		}
-
-		gk := gvk.GroupKind()
-		// Return early if the GroupKind doesn't match what we expect.
-		infraGK := m.Spec.InfrastructureRef.GroupVersionKind().GroupKind()
-		if gk != infraGK {
-			return nil
-		}
-
-		return []reconcile.Request{
-			{
-				NamespacedName: client.ObjectKey{
-					Namespace: m.Namespace,
-					Name:      m.Spec.InfrastructureRef.Name,
-				},
-			},
-		}
-	}
 }
 
 // HasOwnerRef returns true if the OwnerReference is already in the slice.
@@ -323,26 +261,6 @@ func indexOwnerRef(ownerReferences []metav1.OwnerReference, ref metav1.OwnerRefe
 	return -1
 }
 
-// IsOwnedByObject returns true if any of the owner references point to the given target.
-func IsOwnedByObject(obj metav1.Object, target client.Object) bool {
-	for _, ref := range obj.GetOwnerReferences() {
-		ref := ref
-		if refersTo(&ref, target) {
-			return true
-		}
-	}
-	return false
-}
-
-// IsControlledBy differs from metav1.IsControlledBy in that it checks the group (but not version), kind, and name vs uid.
-func IsControlledBy(obj metav1.Object, owner client.Object) bool {
-	controllerRef := metav1.GetControllerOfNoCopy(obj)
-	if controllerRef == nil {
-		return false
-	}
-	return refersTo(controllerRef, owner)
-}
-
 // Returns true if a and b point to the same object.
 func referSameObject(a, b metav1.OwnerReference) bool {
 	aGV, err := schema.ParseGroupVersion(a.APIVersion)
@@ -356,17 +274,6 @@ func referSameObject(a, b metav1.OwnerReference) bool {
 	}
 
 	return aGV.Group == bGV.Group && a.Kind == b.Kind && a.Name == b.Name
-}
-
-// Returns true if ref refers to obj.
-func refersTo(ref *metav1.OwnerReference, obj client.Object) bool {
-	refGv, err := schema.ParseGroupVersion(ref.APIVersion)
-	if err != nil {
-		return false
-	}
-
-	gvk := obj.GetObjectKind().GroupVersionKind()
-	return refGv.Group == gvk.Group && ref.Kind == gvk.Kind && ref.Name == obj.GetName()
 }
 
 // UnstructuredUnmarshalField is a wrapper around json and unstructured objects to decode and copy a specific field
@@ -422,7 +329,8 @@ func GetGVKMetadata(ctx context.Context, c client.Client, gvk schema.GroupVersio
 	meta := &metav1.PartialObjectMetadata{}
 	meta.SetName(fmt.Sprintf("%s.%s", flect.Pluralize(strings.ToLower(gvk.Kind)), gvk.Group))
 	meta.SetGroupVersionKind(apiextensionsv1.SchemeGroupVersion.WithKind("CustomResourceDefinition"))
-	if err := c.Get(ctx, client.ObjectKeyFromObject(meta), meta); err != nil {
+	k, _ := client.ObjectKeyFromObject(meta)
+	if err := c.Get(ctx, k, meta); err != nil {
 		return meta, errors.Wrap(err, "failed to retrieve metadata from GVK resource")
 	}
 	return meta, nil
@@ -478,37 +386,6 @@ func (o MachinesByCreationTimestamp) Less(i, j int) bool {
 		return o[i].Name < o[j].Name
 	}
 	return o[i].CreationTimestamp.Before(&o[j].CreationTimestamp)
-}
-
-// ClusterToObjectsMapper returns a mapper function that gets a cluster and lists all objects for the object passed in
-// and returns a list of requests.
-// NB: The objects are required to have `clusterv1.ClusterLabelName` applied.
-func ClusterToObjectsMapper(c client.Client, ro client.ObjectList, scheme *runtime.Scheme) (handler.MapFunc, error) {
-	gvk, err := apiutil.GVKForObject(ro, scheme)
-	if err != nil {
-		return nil, err
-	}
-
-	return func(o client.Object) []ctrl.Request {
-		cluster, ok := o.(*clusterv1.Cluster)
-		if !ok {
-			return nil
-		}
-
-		list := &unstructured.UnstructuredList{}
-		list.SetGroupVersionKind(gvk)
-		if err := c.List(context.TODO(), list, client.MatchingLabels{clusterv1.ClusterLabelName: cluster.Name}); err != nil {
-			return nil
-		}
-
-		results := []ctrl.Request{}
-		for _, obj := range list.Items {
-			results = append(results, ctrl.Request{
-				NamespacedName: client.ObjectKey{Namespace: obj.GetNamespace(), Name: obj.GetName()},
-			})
-		}
-		return results
-	}, nil
 }
 
 // ObjectReferenceToUnstructured converts an object reference to an unstructured object.
