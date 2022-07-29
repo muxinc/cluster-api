@@ -363,6 +363,11 @@ type JoinConfiguration struct {
 	// If nil, no additional control plane instance will be deployed.
 	// +optional
 	ControlPlane *JoinControlPlane `json:"controlPlane,omitempty"`
+
+	// Patches contains options related to applying patches to components deployed by kubeadm during
+	// "kubeadm init". The minimum kubernetes version needed to support Patches is v1.22
+	// +optional
+	Patches *Patches `json:"patches,omitempty"`
 }
 
 // JoinControlPlane contains elements describing an additional control plane instance to be deployed on the joining node.
